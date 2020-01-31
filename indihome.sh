@@ -64,7 +64,7 @@ indihome_login() {
             -F "_token=$TOKEN" \
             -F "email=$EMAIL" \
             -F "password=$PASSWORD" \
-            -o tmp/last_login.html \
+            -o /dev/null \
             $LOGIN_URL
     )
     CODE=$(echo "$RESULT" | cut -d ' ' -f1)
