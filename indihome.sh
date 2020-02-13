@@ -4,6 +4,15 @@
 # by: klampok.child@gmail.com
 
 set -e
+
+if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+    echo "Usage:"
+    echo "  $0 [ -l | --login ] [ -h | --help ]"
+    echo "      --login   Force login"
+    echo "      --help    This help"
+    exit
+fi
+
 CONFIG="indihome.cfg"
 if [ ! -f $CONFIG ]; then
     echo "Tidak ada file konfigurasi: $CONFIG" 1>&2
@@ -119,6 +128,11 @@ indihome_data() {
     if [ -z "$FUP" ]; then FUP='-'; fi
 }
 
+if [ "$1" == "-l" ] || [ "$1" == "--login" ]; then
+    echo "Force login..." 1>&2
+    indihome_login
+fi
+
 indihome_data
 
 if [ "$?" != "0" ]; then
@@ -131,4 +145,4 @@ echo -e "STATUS_BAYAR\t: $STATUS_BAYAR"
 echo -e "JUMLAH_BAYAR\t: $JUMLAH_BAYAR"
 echo -e "PENGGUNAAN\t: $PENGGUNAAN GB"
 echo -e "FUP\t\t: $FUP GB"
-echo "---------------------"
+echo "Done..." 1>&2
