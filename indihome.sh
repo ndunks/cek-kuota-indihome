@@ -4,16 +4,27 @@
 # by: klampok.child@gmail.com
 
 set -e
-
-if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
-    echo "Usage:"
-    echo "  $0 [ -l | --login ] [ -h | --help ]"
-    echo "      --login   Force login"
-    echo "      --help    This help"
-    exit
-fi
-
 CONFIG="indihome.cfg"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -l | --login)
+        FORCELOGIN=1
+        shift # past argument
+        ;;
+    -h | --help)
+        echo "Usage:"
+        echo "  $0 [ -l | --login ] [ -h | --help ] [ indihome.cfg ]"
+        echo "      --login   Force login"
+        echo "      --help    This help"
+        exit
+        ;;
+    *)
+        CONFIG="$1"
+        shift
+        ;;
+    esac
+done
+
 if [ ! -f $CONFIG ]; then
     echo "Tidak ada file konfigurasi: $CONFIG" 1>&2
     exit 1
