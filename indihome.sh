@@ -26,8 +26,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ ! -f $CONFIG ]; then
-    echo "Tidak ada file konfigurasi: $CONFIG" 1>&2
-    exit 1
+    if [ -f "$HOME/.$CONFIG" ]; then
+        CONFIG="$HOME/.$CONFIG"
+        echo "Using config in $CONFIG"
+    else
+        echo "Tidak ada file konfigurasi: $CONFIG" 1>&2
+        exit 1
+    fi
 fi
 
 source $CONFIG
@@ -40,7 +45,7 @@ if [ -z "$PASSWORD" ]; then
     exit 1
 fi
 
-CURL="curl -s -b cookie.txt -c cookie.txt -k"
+CURL="curl -s -b /tmp/indihome-cookie.txt -c /tmp/indihome-cookie.txt -k"
 HOME_URL="https://www.indihome.co.id"
 CEK_URL="$HOME_URL/verifikasi-layanan/cek-email"
 LOGIN_URL="$HOME_URL/verifikasi-layanan/login"
