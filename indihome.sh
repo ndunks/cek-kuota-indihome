@@ -7,30 +7,52 @@ set -e
 CONFIG="indihome.cfg"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-    -l | --login)
-        FORCELOGIN=1
-        shift # past argument
+    -d | --debug)
+        DEBUG=1
+        ;;
+    -n | --nomor)
+        shift
+        ACCOUNT="$1"
         ;;
     -h | --help)
-        echo "Usage:"
-        echo "  $0 [ -l | --login ] [ -h | --help ] [ indihome.cfg ]"
-        echo "      --login   Force login"
-        echo "      --help    This help"
+        echo "Penggunaan:"
+        echo "$0 [ -h | -d | -a nomor | -c config ]"
+        echo "  -h | --help              Bantuan ini."
+        echo "  -d | --debug             Debug mode, html saved in $PWD/indihome-debug.html"
+        echo "                           jika sesi sebelumnya sudah tidak valid."
+        echo "  -c file | --config file  Lokasi file konfigurasi."
+        echo "                           Default './indihome.cfg' atau '$HOME/.indihome.cfg'"
+        echo "  -n nomor | --nomor nomor Hanya tampilkan akun no urut tsbt. default all."
+        echo "                           (hanya berlaku utk yg multi profile indihome)"
         exit
         ;;
-    *)
-        CONFIG="$1"
+    -c | --config)
         shift
+        CONFIG="$1"
         ;;
     esac
+    shift
 done
 
-if [ ! -f $CONFIG ]; then
-    if [ -f "$HOME/.$CONFIG" ]; then
+HOME_URL="https://www.indihome.co.id"
+CEK_URL="$HOME_URL/verifikasi-layanan/cek-email"
+LOGIN_URL="$HOME_URL/verifikasi-layanan/login"
+DATA_URL="$HOME_URL/profile/status-langganan/get-data"
+FAST_URL="$HOME_URL/announcements"
+COOKIE="/tmp/indihome-cookie.txt"
+CURL="curl -A github.com/ndunks/cek-kuota-indihome -skb $COOKIE -c $COOKIE"
+
+if [ -n "$DEBUG" ]; then
+    echo "Options:" 1>&2
+    echo "FORCELOGIN: $FORCELOGIN, DEBUG: $DEBUG, ACCOUNT: $ACCOUNT, CONFIG: $CONFIG" 1>&2
+fi
+
+if [ ! -f "$CONFIG" ]; then
+    if [ -e "$HOME/.$CONFIG" ]; then
         CONFIG="$HOME/.$CONFIG"
-        echo "Using config in $CONFIG"
+        echo "Using config in $CONFIG" 1>&2
     else
-        echo "Tidak ada file konfigurasi: $CONFIG" 1>&2
+        echo "Tidak ada file konfigurasi: $CONFIG atau $HOME/.$CONFIG" 1>&2
         exit 1
     fi
 fi
@@ -45,120 +67,103 @@ if [ -z "$PASSWORD" ]; then
     exit 1
 fi
 
-CURL="curl -s -b /tmp/indihome-cookie.txt -c /tmp/indihome-cookie.txt -k"
-HOME_URL="https://www.indihome.co.id"
-CEK_URL="$HOME_URL/verifikasi-layanan/cek-email"
-LOGIN_URL="$HOME_URL/verifikasi-layanan/login"
+indihome_curl() {
+    if [ -n "$DEBUG" ]; then
+        echo "CURL: $*" 1>&2
+        $CURL $* >indihome-debug.html
+        cat indihome-debug.html
+    else
+        $CURL $*
+    fi
+}
+
+indihome_get_token() {
+    TOKEN=$(indihome_curl $FAST_URL | grep "_token" | head -n 1 | cut -d '"' -f6)
+}
 
 indihome_login() {
-    TOKEN=$(
-        $CURL $CEK_URL |
-            grep "_token" |
-            head -n 1 |
-            cut -d '"' -f6
-    )
+    RESULT=$(indihome_curl -i $CEK_URL)
+    CODE=$(echo "$RESULT" | head -n 1 | cut -d ' ' -f2)
+    if [ $CODE = "302" ]; then
+        echo "Masih login.." 1>&2
+        return 0
+    fi
+    TOKEN=$(echo "$RESULT" | grep "_token" | head -n 1 | cut -d '"' -f6)
     if [ -z "$TOKEN" ]; then
         echo "Fail get token" 1>&2
         return 1
     fi
-
-    ## Step cek email bisa dilewati aja, langsung login
-    ## yg pnting udah dapet CSRF Token.
-
-    # RESULT=$(
-    #     $CURL -o /dev/null \
-    #         -w "%{http_code} %{redirect_url}" \
-    #         -F "_token=$TOKEN" \
-    #         -F "email=$EMAIL" $CEK_URL
-    # )
-    # CODE=$(echo "$RESULT" | cut -d ' ' -f1)
-    # REDIRECT=$(echo "$RESULT" | cut -d ' ' -f2)
-    # if [ "$CODE" != "302" ]; then
-    #     echo "Invalid code: $CODE" 1>&2
-    #     return 1
-    # fi
-    # if [ "$REDIRECT" != "$LOGIN_URL" ]; then
-    #     echo "Invalid Redirect: $REDIRECT" 1>&2
-    #     return 1
-    # fi
+    echo "Login.." 1>&2
 
     # Do Login
     RESULT=$(
-        $CURL \
-            -w "%{http_code} %{redirect_url}" \
+        indihome_curl -i \
             -F "_token=$TOKEN" \
             -F "email=$EMAIL" \
             -F "password=$PASSWORD" \
-            -o /dev/null \
             $LOGIN_URL
     )
-    CODE=$(echo "$RESULT" | cut -d ' ' -f1)
-    REDIRECT=$(echo "$RESULT" | cut -d ' ' -f2)
-    if [ "$CODE" != "302" ]; then
+    CODE=$(echo "$RESULT" | head -n 1 | cut -d ' ' -f2)
+    REDIRECT=$(echo "$RESULT" | grep Location | cut -d ' ' -f2)
+    if [[ "$CODE" != "302" && "$CODE" != "100" ]]; then
         echo "Invalid code: $CODE" 1>&2
         return 1
     fi
-    if [ "$REDIRECT" != "$HOME_URL" ]; then
-        echo "Failed login: $REDIRECT" 1>&2
+
+    if $(echo "$REDIRECT" | grep $LOGIN_URL); then
+        echo "Login gagal, cek username password." 1>&2
         return 1
     fi
+    echo "Login OK" 1>&2
+}
+
+indihome_profiles() {
+    echo "Mengambil daftar profile akun.."
+    PROFILES=()
+    LINES=$(indihome_curl $HOME_URL/profile/status-langganan |
+        grep data-portfolio_id |
+        tr -s ' ' |
+        cut -d ' ' -f4-6 |
+        sed 's/data-//g')
+    IFS2="$IFS"
+    IFS=$'\n'
+    for LINE in $LINES; do
+        PROFILES+=($LINE)
+    done
+    IFS=$IFS2
 }
 
 indihome_data() {
-    echo "Getting data..." 1>&2
-    RESULT="$($CURL $HOME_URL)"
-    NAMA=$(echo "$RESULT" | sed -n '/glyphicon-user/s/^.\+span> \(.*\)$/\1/p')
-    if [ -z "$NAMA" ] || [ "$NAMA" == "myIndiHome" ]; then
-        if [ -z "$RETRY" ]; then
-            echo "Not logged in, Try to login.." 1>&2
-            RETRY="1"
-            indihome_login
-            indihome_data
-            return $?
-        fi
-        # Failed
-        return 1
-    fi
-    STATUS_BAYAR=$(
-        echo "$RESULT" |
-            grep -m 1 -A 2 "/riwayat/tagihan" |
-            tail -n2 |
-            head -n1 |
-            sed 's/.\+>\(.*\)<.\+/\1/'
-    )
-    JUMLAH_BAYAR=$(
-        echo "$RESULT" |
-            grep -m 1 -A 2 "/riwayat/tagihan" |
-            tail -n1 |
-            sed 's/.\+>\(.\+\)<\/b>.\+/\1/'
-    )
-    PENGGUNAAN=$(
-        echo "$RESULT" |
-            grep -A 2 "txtItemStatusLanggananHome" |
-            sed -n '2s/.\+>\/\(.\+\)\s.\+/\1/p'
-    )
-    FUP=$(
-        echo "$RESULT" |
-            sed -n 's/^.\+"minipackPackage">\(.*\)<\/span> GB.\+$/\1/p'
-    )
-    if [ -z "$FUP" ]; then FUP='-'; fi
+    echo "Getting data $3..." 1>&2
+    [ -n "$TOKEN" ] || indihome_get_token
+
+    RESULT=$(indihome_curl \
+        -F "_token=$TOKEN" \
+        -F "portfolio_id=$1" \
+        -F "no_inet=$2" \
+        -F "no_pots=$3" \
+        $DATA_URL)
+    eval $(echo $RESULT |
+        cut -d '{' -f 3 |
+        sed -e 's/,\"/\n\"/g' |
+        sed -e 's/^"//' -e 's/":/=/g')
+    #packageName quota usage usageBar remain menitQuota menitUsage speed channel
+    echo "No Telp : $3"
+    echo "No Inet : $2"
+    echo "Speed   : $speed"
+    echo "Quota   : $usage/$quota (Sisa $remain) GB"
+    echo "Telpon  : $menitUsage/$menitQuota"
+    echo "Channel : $channel"
 }
 
-if [ "$1" == "-l" ] || [ "$1" == "--login" ]; then
-    echo "Force login..." 1>&2
-    indihome_login
-fi
+indihome_login
+indihome_profiles
 
-indihome_data
-
-if [ "$?" != "0" ]; then
-    echo "FAILED GET DATA" 1>&2
-    exit 1
-fi
-
-echo -e "NAMA\t\t: $NAMA"
-echo -e "STATUS_BAYAR\t: $STATUS_BAYAR"
-echo -e "JUMLAH_BAYAR\t: $JUMLAH_BAYAR"
-echo -e "PENGGUNAAN\t: $PENGGUNAAN GB"
-echo -e "FUP\t\t: $FUP GB"
-echo "Done..." 1>&2
+for IDX in ${!PROFILES[@]}; do
+    let "NO=$IDX+1"
+    if [[ -z "$ACCOUNT" || "$ACCOUNT" = $NO ]]; then
+        eval $(echo ${PROFILES[$IDX]} | xargs)
+        echo "$NO ------------------------"
+        indihome_data $portfolio_id $no_inet $no_pots
+    fi
+done
